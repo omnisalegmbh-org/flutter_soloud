@@ -60,9 +60,9 @@ namespace SoLoud
             DataSource() : file(nullptr), mem(nullptr), memLen(0), memPos(0) {}
 
             unsigned int read(unsigned char *dst, unsigned int bytes);
-            bool seek(int offset);
-            unsigned int tell() const;
-            unsigned int length() const;
+            bool seek(long long offset);
+            unsigned long long tell() const;
+            unsigned long long length() const;
             bool eof() const;
         };
 

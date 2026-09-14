@@ -25,7 +25,14 @@ distribution.
 #undef _CRT_SECURE_NO_WARNINGS
 #define _CRT_SECURE_NO_WARNINGS
 
+// 64-bit stdio offsets on every platform that has them. Must precede the first
+// system include on 32-bit Linux and Android, where `off_t` is otherwise 32-bit.
+#if !defined(_WIN32) && !defined(_FILE_OFFSET_BITS)
+#define _FILE_OFFSET_BITS 64
+#endif
+
 #include <stdio.h>
+#include <sys/types.h>
 #include <string.h>
 #include "soloud.h"
 #include "soloud_file.h"
@@ -38,6 +45,35 @@ distribution.
 
 namespace SoLoud
 {
+	// Large-file seek and tell. `fseek`/`ftell` take a `long`, which is 32-bit on
+	// Windows and on every 32-bit ABI, so a stream past 2 GiB could neither be
+	// positioned nor asked where it was - and a multi-hour lossless stem is well
+	// past that. Each platform has a 64-bit pair; this picks it.
+	static int soloud_fseek64(FILE *aFile, long long aOffset, int aWhence)
+	{
+#if defined(_WIN32)
+		return _fseeki64(aFile, aOffset, aWhence);
+#elif defined(__ANDROID__) && !defined(__LP64__) && __ANDROID_API__ < 24
+		// 32-bit bionic before API 24 has no 64-bit stdio seek at all. Keep the
+		// 32-bit call there rather than fail to build; those devices keep the old
+		// 2 GiB limit.
+		return fseek(aFile, (long)aOffset, aWhence);
+#else
+		return fseeko(aFile, (off_t)aOffset, aWhence);
+#endif
+	}
+
+	static long long soloud_ftell64(FILE *aFile)
+	{
+#if defined(_WIN32)
+		return _ftelli64(aFile);
+#elif defined(__ANDROID__) && !defined(__LP64__) && __ANDROID_API__ < 24
+		return ftell(aFile);
+#else
+		return (long long)ftello(aFile);
+#endif
+	}
+
 	unsigned int File::read8()
 	{
 		unsigned char d = 0;
@@ -70,25 +106,30 @@ mFileHandle(fp)
 		return (unsigned int)fread(aDst, 1, aBytes, mFileHandle);
 	}
 
-	unsigned int DiskFile::length()
+	unsigned long long DiskFile::length()
 	{
 		if (!mFileHandle)
 			return 0;
-		unsigned int pos = (unsigned int)ftell(mFileHandle);
-		fseek(mFileHandle, 0, SEEK_END);
-		unsigned int len = (unsigned int)ftell(mFileHandle);
-		fseek(mFileHandle, pos, SEEK_SET);
-		return len;
+		long long pos = soloud_ftell64(mFileHandle);
+		soloud_fseek64(mFileHandle, 0, SEEK_END);
+		long long len = soloud_ftell64(mFileHandle);
+		soloud_fseek64(mFileHandle, pos < 0 ? 0 : pos, SEEK_SET);
+		return len < 0 ? 0 : (unsigned long long)len;
 	}
 
-	void DiskFile::seek(int aOffset)
+	void DiskFile::seek(long long aOffset)
 	{
-		fseek(mFileHandle, aOffset, SEEK_SET);
+		if (!mFileHandle)
+			return;
+		soloud_fseek64(mFileHandle, aOffset < 0 ? 0 : aOffset, SEEK_SET);
 	}
 
-	unsigned int DiskFile::pos()
+	unsigned long long DiskFile::pos()
 	{
-		return (unsigned int)ftell(mFileHandle);
+		if (!mFileHandle)
+			return 0;
+		long long pos = soloud_ftell64(mFileHandle);
+		return pos < 0 ? 0 : (unsigned long long)pos;
 	}
 
 	FILE *DiskFile::getFilePtr()
@@ -150,22 +191,25 @@ mFileHandle(fp)
 		return aBytes;
 	}
 
-	unsigned int MemoryFile::length()
+	unsigned long long MemoryFile::length()
 	{
 		return mDataLength;
 	}
 
-	void MemoryFile::seek(int aOffset)
+	void MemoryFile::seek(long long aOffset)
 	{
-		if (aOffset >= 0)
-			mOffset = aOffset;
-		else
-			mOffset = mDataLength + aOffset;
-		if (mOffset > mDataLength-1)
-			mOffset = mDataLength-1;
+		// In-memory data is bounded by a 32-bit length (see openToMem), so the
+		// wide offset only needs clamping into that range. A negative offset is
+		// from the end, as before.
+		long long target = aOffset >= 0 ? aOffset : (long long)mDataLength + aOffset;
+		if (target < 0 || mDataLength == 0)
+			target = 0;
+		else if (target > (long long)mDataLength - 1)
+			target = (long long)mDataLength - 1;
+		mOffset = (unsigned int)target;
 	}
 
-	unsigned int MemoryFile::pos()
+	unsigned long long MemoryFile::pos()
 	{
 		return mOffset;
 	}
@@ -230,7 +274,11 @@ mFileHandle(fp)
 		if (res != SO_NO_ERROR)
 			return res;
 
-		mDataLength = df.length();
+		// In-memory data keeps a 32-bit length; a file beyond it can only be streamed.
+		unsigned long long length = df.length();
+		if (length > 0xFFFFFFFFull)
+			return OUT_OF_MEMORY;
+		mDataLength = (unsigned int)length;
 		mDataPtr = new unsigned char[mDataLength];
 		if (mDataPtr == NULL)
 			return OUT_OF_MEMORY;
@@ -248,7 +296,10 @@ mFileHandle(fp)
 		mDataPtr = 0;
 		mOffset = 0;
 
-		mDataLength = aFile->length();
+		unsigned long long length = aFile->length();
+		if (length > 0xFFFFFFFFull)
+			return OUT_OF_MEMORY;
+		mDataLength = (unsigned int)length;
 		mDataPtr = new unsigned char[mDataLength];
 		if (mDataPtr == NULL)
 			return OUT_OF_MEMORY;
@@ -288,10 +339,10 @@ extern "C"
 		switch (base)
 		{
 		case SEEK_CUR:
-			fp->seek(fp->pos() + idx);
+			fp->seek((long long)fp->pos() + idx);
 			break;
 		case SEEK_END:
-			fp->seek(fp->length() + idx);
+			fp->seek((long long)fp->length() + idx);
 			break;
 		default:
 			fp->seek(idx);
@@ -302,7 +353,7 @@ extern "C"
 	int Soloud_Filehack_ftell(Soloud_Filehack *f)
 	{
 		SoLoud::File *fp = (SoLoud::File *)f;
-		return fp->pos();
+		return (int)fp->pos();
 	}
 
 	int Soloud_Filehack_fclose(Soloud_Filehack *f)

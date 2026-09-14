@@ -1,3 +1,9 @@
+##### 4.1.7 + large files (lalal.ai fork, 14 Sep 2026)
+- fix: disk-streamed files larger than 2 GiB. `File::seek`/`pos`/`length` are 64-bit, `DiskFile` uses `_fseeki64`/`fseeko`, and the dr_flac/dr_mp3/dr_wav seek callbacks form their target in 64 bits. Previously any seek past 2 GiB, and any position past 4 GiB, wrapped.
+- perf: an MP3 `WavStream` builds a dr_mp3 seek table at load time (one point per ~2 s), so `seek()` is a binary search plus at most ~2 s of decoding instead of a decode from the start of the stream on the calling thread.
+- `WavStream` sample counters are 64-bit and `getLength()` is computed in double precision.
+- chore: the miniaudio stop-before-uninit check matches the pub.dev 4.1.7 release.
+
 ##### 4.1.7 (X Xxx 2026)
 - fix: a device change that still fails now reports `SoLoudAudioDeviceFailedToStartCppException` instead of hanging. Thanks to @Colton127 #533
 - fix: `changeDevice()` now selects the system default device when called without an argument and reports device-change failures instead of silently succeeding. Thanks to @Colton127 #533

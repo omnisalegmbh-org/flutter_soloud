@@ -171,7 +171,7 @@ namespace SoLoud
 		return FILE_LOAD_FAILED;
 #else
 		MBOggDecoder decoder;
-		if (!decoder.open(aReader->getMemPtr(), aReader->length()))
+		if (!decoder.open(aReader->getMemPtr(), (unsigned int)aReader->length()))
 		{
             printf("[Wav::loadogg] decoder.open failed\n");
 			return FILE_LOAD_FAILED;

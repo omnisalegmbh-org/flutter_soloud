@@ -28,10 +28,12 @@ namespace SoLoud
         return 0;
     }
 
-    bool MBOggDecoder::DataSource::seek(int offset)
+    bool MBOggDecoder::DataSource::seek(long long offset)
     {
         if (file)
         {
+            if (offset < 0)
+                return false;
             file->seek(offset);
             return true;
         }
@@ -39,22 +41,22 @@ namespace SoLoud
         {
             if (offset < 0)
                 offset = 0;
+            if (offset > (long long)memLen)
+                offset = memLen;
             memPos = (unsigned int)offset;
-            if (memPos > memLen)
-                memPos = memLen;
             return true;
         }
         return false;
     }
 
-    unsigned int MBOggDecoder::DataSource::tell() const
+    unsigned long long MBOggDecoder::DataSource::tell() const
     {
         if (file)
             return file->pos();
         return memPos;
     }
 
-    unsigned int MBOggDecoder::DataSource::length() const
+    unsigned long long MBOggDecoder::DataSource::length() const
     {
         if (file)
             return file->length();
@@ -226,7 +228,7 @@ namespace SoLoud
     bool MBOggDecoder::detectCodec()
     {
         mCodecType = CODEC_UNKNOWN;
-        unsigned int savedPos = mDataSource.tell();
+        unsigned long long savedPos = mDataSource.tell();
 
         unsigned char probe[4096];
         unsigned int bytesRead = mDataSource.read(probe, 4096);
@@ -342,17 +344,17 @@ namespace SoLoud
     int MBOggDecoder::vorbisSeekCb(void *datasource, ogg_int64_t offset, int whence)
     {
         DataSource *ds = static_cast<DataSource *>(datasource);
-        int absPos = 0;
+        long long absPos = 0;
         switch (whence)
         {
         case SEEK_SET:
-            absPos = (int)offset;
+            absPos = (long long)offset;
             break;
         case SEEK_CUR:
-            absPos = (int)(ds->tell() + offset);
+            absPos = (long long)ds->tell() + (long long)offset;
             break;
         case SEEK_END:
-            absPos = (int)(ds->length() + offset);
+            absPos = (long long)ds->length() + (long long)offset;
             break;
         default:
             return -1;
@@ -695,7 +697,7 @@ namespace SoLoud
     {
         // For OGG/FLAC, STREAMINFO may report total_samples=0.
         // Scan Ogg pages for the last granule position before initializing the decoder.
-        unsigned int savedPos = mDataSource.tell();
+        unsigned long long savedPos = mDataSource.tell();
         ogg_sync_state scanOy;
         ogg_page scanOg;
         ogg_sync_init(&scanOy);
@@ -854,7 +856,7 @@ namespace SoLoud
     {
         (void)decoder;
         MBOggDecoder *self = static_cast<MBOggDecoder *>(client_data);
-        if (!self->mDataSource.seek((int)absolute_byte_offset))
+        if (!self->mDataSource.seek((long long)absolute_byte_offset))
             return FLAC__STREAM_DECODER_SEEK_STATUS_ERROR;
         return FLAC__STREAM_DECODER_SEEK_STATUS_OK;
     }

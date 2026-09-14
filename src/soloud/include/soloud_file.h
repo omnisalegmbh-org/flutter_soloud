@@ -41,9 +41,14 @@ namespace SoLoud
 		unsigned int read32();
 		virtual int eof() = 0;
 		virtual unsigned int read(unsigned char *aDst, unsigned int aBytes) = 0;
-		virtual unsigned int length() = 0;
-		virtual void seek(int aOffset) = 0;
-		virtual unsigned int pos() = 0;
+		// Offsets and lengths are 64-bit throughout. The original API took an
+		// `int` offset and returned `unsigned int` positions, which broke any
+		// seek past 2 GiB and any position past 4 GiB - a long lossless stem
+		// crosses both. The dr_* decoders already chunk their own seeks into
+		// 32-bit steps, so widening this layer is all that was missing.
+		virtual unsigned long long length() = 0;
+		virtual void seek(long long aOffset) = 0;
+		virtual unsigned long long pos() = 0;
 		virtual FILE * getFilePtr() { return 0; }
 		virtual const unsigned char * getMemPtr() { return 0; }
 	};
@@ -55,9 +60,9 @@ namespace SoLoud
 
 		virtual int eof();
 		virtual unsigned int read(unsigned char *aDst, unsigned int aBytes);
-		virtual unsigned int length();
-		virtual void seek(int aOffset);
-		virtual unsigned int pos();
+		virtual unsigned long long length();
+		virtual void seek(long long aOffset);
+		virtual unsigned long long pos();
 		virtual ~DiskFile();
 		DiskFile();
 		DiskFile(FILE *fp);
@@ -75,9 +80,9 @@ namespace SoLoud
 
 		virtual int eof();
 		virtual unsigned int read(unsigned char *aDst, unsigned int aBytes);
-		virtual unsigned int length();
-		virtual void seek(int aOffset);
-		virtual unsigned int pos();
+		virtual unsigned long long length();
+		virtual void seek(long long aOffset);
+		virtual unsigned long long pos();
 		virtual const unsigned char * getMemPtr();
 		virtual ~MemoryFile();
 		MemoryFile();

@@ -48,7 +48,7 @@ namespace SoLoud
 	class WavStreamInstance : public AudioSourceInstance
 	{
 		WavStream *mParent;
-		unsigned int mOffset;
+		unsigned long long mOffset;
 		File *mFile;
 		union codec
 		{
@@ -82,12 +82,21 @@ namespace SoLoud
 		result loadogg(File *fp);
 		result loadflac(File *fp);
 		result loadmp3(File *fp);
+		void clearMp3SeekTable();
 	public:
 		int mFiletype;
 		char *mFilename;
 		File *mMemFile;
 		File *mStreamFile;
-		unsigned int mSampleCount;
+		unsigned long long mSampleCount;
+
+		// dr_mp3 seek table for MP3 streams, computed once at load and bound to
+		// every instance. Without it dr_mp3 seeks by decoding from the start of the
+		// stream, which for a long file is seconds to minutes on the calling thread.
+		// Stored untyped because `drmp3_seek_point` is an anonymous typedef and
+		// cannot be forward-declared here.
+		void *mMp3SeekPoints;
+		unsigned int mMp3SeekPointCount;
 
 		WavStream();
 		virtual ~WavStream();

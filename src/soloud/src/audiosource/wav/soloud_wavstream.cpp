@@ -59,27 +59,45 @@ namespace SoLoud
 	drflac_bool32 drflac_seek_func(void* pUserData, int offset, drflac_seek_origin origin)
 	{
 		File *fp = (File*)pUserData;
+		// The decoder hands over 32-bit steps and chunks anything larger itself;
+		// the absolute target still has to be formed in 64 bits, or a relative
+		// seek past 2 GiB wraps.
+		long long target = offset;
 		if (origin != DRFLAC_SEEK_SET)
-			offset += fp->pos();
-		fp->seek(offset);
+			target += (long long)fp->pos();
+		if (target < 0)
+			return 0;
+		fp->seek(target);
 		return 1;
 	}
 
 	drmp3_bool32 drmp3_seek_func(void* pUserData, int offset, drmp3_seek_origin origin)
 	{
 		File *fp = (File*)pUserData;
+		// The decoder hands over 32-bit steps and chunks anything larger itself;
+		// the absolute target still has to be formed in 64 bits, or a relative
+		// seek past 2 GiB wraps.
+		long long target = offset;
 		if (origin != DRMP3_SEEK_SET)
-			offset += fp->pos();
-		fp->seek(offset);
+			target += (long long)fp->pos();
+		if (target < 0)
+			return 0;
+		fp->seek(target);
 		return 1;
 	}
 
 	drmp3_bool32 drwav_seek_func(void* pUserData, int offset, drwav_seek_origin origin)
 	{
 		File *fp = (File*)pUserData;
+		// The decoder hands over 32-bit steps and chunks anything larger itself;
+		// the absolute target still has to be formed in 64 bits, or a relative
+		// seek past 2 GiB wraps.
+		long long target = offset;
 		if (origin != DRWAV_SEEK_SET)
-			offset += fp->pos();
-		fp->seek(offset);
+			target += (long long)fp->pos();
+		if (target < 0)
+			return 0;
+		fp->seek(target);
 		return 1;
 	}
 
@@ -95,7 +113,7 @@ namespace SoLoud
 		{
 			MemoryFile *mf = new MemoryFile();
 			mFile = mf;
-			mf->openMem(aParent->mMemFile->getMemPtr(), aParent->mMemFile->length(), false, false);
+			mf->openMem(aParent->mMemFile->getMemPtr(), (unsigned int)aParent->mMemFile->length(), false, false);
 		}
 		else
 		if (aParent->mFilename)
@@ -166,6 +184,12 @@ namespace SoLoud
 					if (mFile != mParent->mStreamFile)
 						delete mFile;
 					mFile = 0;
+				}
+				else if (mParent->mMp3SeekPoints && mParent->mMp3SeekPointCount > 0)
+				{
+					// The table describes byte offsets in the same stream, so it is
+					// valid for every instance; dr_mp3 never frees it.
+					drmp3_bind_seek_table(mCodec.mMp3, mParent->mMp3SeekPointCount, (drmp3_seek_point*)mParent->mMp3SeekPoints);
 				}
 			}
 			else
@@ -318,16 +342,16 @@ namespace SoLoud
 	{
 		if (mCodec.mOgg)
 		{
-			int pos = (int)floor(mBaseSamplerate * aSeconds);
+			unsigned long long pos = (unsigned long long)floor((double)mBaseSamplerate * aSeconds);
 			double newPosition;
 
 			switch (mParent->mFiletype)
 			{
 #if !defined(NO_XIPH_LIBS)
 			case WAVSTREAM_OGG:
-				mCodec.mOgg->seek(pos);
+				mCodec.mOgg->seek((unsigned int)pos);
 				mOffset = pos;
-				newPosition = float(pos / mBaseSamplerate);
+				newPosition = (double)pos / (double)mBaseSamplerate;
 				mStreamPosition = newPosition;
 				mStreamEnded = false;
 				return 0;
@@ -335,7 +359,7 @@ namespace SoLoud
 			case WAVSTREAM_FLAC:
 				drflac_seek_to_pcm_frame(mCodec.mFlac, pos);
 				mOffset = pos;
-				mStreamPosition = float(pos / mBaseSamplerate);
+				mStreamPosition = (double)pos / (double)mBaseSamplerate;
 				return 0;
 			case WAVSTREAM_MP3:
 				// When using TYPE_WAVSTREAM for mp3 and seeking backward,
@@ -346,12 +370,12 @@ namespace SoLoud
 				// To have no lags, please use TYPE_WAV instead if possible!
 				drmp3_seek_to_pcm_frame(mCodec.mMp3, pos);
 				mOffset = pos;
-				mStreamPosition = float(pos / mBaseSamplerate);
+				mStreamPosition = (double)pos / (double)mBaseSamplerate;
 				return 0;
 			case WAVSTREAM_WAV:
 				drwav_seek_to_pcm_frame(mCodec.mWav, pos);
 				mOffset = pos;
-				mStreamPosition = float(pos / mBaseSamplerate);
+				mStreamPosition = (double)pos / (double)mBaseSamplerate;
 				return 0;
 			default:
 				break;
@@ -426,6 +450,8 @@ namespace SoLoud
 		mFiletype = WAVSTREAM_WAV;
 		mMemFile = 0;
 		mStreamFile = 0;
+		mMp3SeekPoints = 0;
+		mMp3SeekPointCount = 0;
 	}
 	
 	WavStream::~WavStream()
@@ -433,6 +459,14 @@ namespace SoLoud
 		stop();
 		delete[] mFilename;
 		delete mMemFile;
+		clearMp3SeekTable();
+	}
+
+	void WavStream::clearMp3SeekTable()
+	{
+		delete[] (drmp3_seek_point*)mMp3SeekPoints;
+		mMp3SeekPoints = 0;
+		mMp3SeekPointCount = 0;
 	}
 	
 #define MAKEDWORD(a,b,c,d) (((d) << 24) | ((c) << 16) | ((b) << 8) | (a))
@@ -452,7 +486,7 @@ namespace SoLoud
 		}
 
 		mBaseSamplerate = (float)decoder.sampleRate;
-		mSampleCount = (unsigned int)decoder.totalPCMFrameCount;
+		mSampleCount = decoder.totalPCMFrameCount;
 		mFiletype = WAVSTREAM_WAV;
 		drwav_uninit(&decoder);
 
@@ -500,7 +534,7 @@ namespace SoLoud
 		}
 
 		mBaseSamplerate = (float)decoder->sampleRate;
-		mSampleCount = (unsigned int)decoder->totalPCMFrameCount;
+		mSampleCount = decoder->totalPCMFrameCount;
 		mFiletype = WAVSTREAM_FLAC;
 		drflac_close(decoder);
 
@@ -524,8 +558,34 @@ namespace SoLoud
 		drmp3_uint64 samples = drmp3_get_pcm_frame_count(&decoder);
 
 		mBaseSamplerate = (float)decoder.sampleRate;
-		mSampleCount = (unsigned int)samples;
+		mSampleCount = samples;
 		mFiletype = WAVSTREAM_MP3;
+
+		// Seek table, one point per ~2 s of audio. dr_mp3 has no other way to seek
+		// an MP3 than decoding forward from the start, which for a long stream is
+		// seconds to minutes inside every `seek` call - on the calling thread, with
+		// the audio mutex held. With a table a seek is a binary search plus at most
+		// ~2 s of decoding. The scan happens here, in the load, which the Dart side
+		// already runs off the UI thread; it costs one more header-only pass over
+		// the file. 24 bytes per point: a ten-hour stream is about 430 KiB.
+		clearMp3SeekTable();
+		if (decoder.sampleRate > 0 && samples > 0)
+		{
+			drmp3_uint64 wanted = samples / ((drmp3_uint64)decoder.sampleRate * 2) + 1;
+			if (wanted > 0xFFFF)
+				wanted = 0xFFFF;
+			drmp3_uint32 count = (drmp3_uint32)wanted;
+			drmp3_seek_point *points = new drmp3_seek_point[count];
+			if (drmp3_calculate_seek_points(&decoder, &count, points) && count > 0)
+			{
+				mMp3SeekPoints = points;
+				mMp3SeekPointCount = count;
+			}
+			else
+			{
+				delete[] points;
+			}
+		}
 		drmp3_uninit(&decoder);
 
 		return SO_NO_ERROR;
@@ -538,6 +598,7 @@ namespace SoLoud
 		mMemFile = 0;
 		mFilename = 0;
 		mSampleCount = 0;
+		clearMp3SeekTable();
 		DiskFile fp;
 		int res = fp.open(aFilename);
 		if (res != SO_NO_ERROR)
@@ -568,6 +629,7 @@ namespace SoLoud
 		mMemFile = 0;
 		mFilename = 0;
 		mSampleCount = 0;
+		clearMp3SeekTable();
 
 		if (aData == NULL || aDataLen == 0)
 			return INVALID_PARAMETER;
@@ -612,6 +674,7 @@ namespace SoLoud
 		mMemFile = 0;
 		mFilename = 0;
 		mSampleCount = 0;
+		clearMp3SeekTable();
 
 		int res = parse(aFile);
 
@@ -633,6 +696,7 @@ namespace SoLoud
 		mMemFile = 0;
 		mFilename = 0;
 		mSampleCount = 0;
+		clearMp3SeekTable();
 
 		MemoryFile *mf = new MemoryFile();
 		int res = mf->openFileToMem(aFile);
@@ -700,6 +764,6 @@ namespace SoLoud
 	{
 		if (mBaseSamplerate == 0)
 			return 0;
-		return mSampleCount / mBaseSamplerate;
+		return (double)mSampleCount / (double)mBaseSamplerate;
 	}
 };
