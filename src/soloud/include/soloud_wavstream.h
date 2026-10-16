@@ -65,6 +65,8 @@ namespace SoLoud
 		virtual result seek(double aSeconds, float* mScratch, unsigned int mScratchSize);
 		virtual result rewind();
 		virtual bool hasEnded();
+		// False when the file could not be opened or decoded: nothing to play.
+		bool isOpen() const { return mFile != 0; }
 		virtual ~WavStreamInstance();
 	};
 

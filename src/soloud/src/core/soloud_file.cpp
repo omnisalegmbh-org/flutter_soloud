@@ -103,6 +103,8 @@ mFileHandle(fp)
 
 	unsigned int DiskFile::read(unsigned char *aDst, unsigned int aBytes)
 	{
+		if (!mFileHandle)
+			return 0;
 		return (unsigned int)fread(aDst, 1, aBytes, mFileHandle);
 	}
 
@@ -175,6 +177,8 @@ mFileHandle(fp)
 
 	int DiskFile::eof()
 	{
+		if (!mFileHandle)
+			return 1;
 		return feof(mFileHandle);
 	}
 

@@ -41,6 +41,10 @@ namespace SoLoud
 		// so let's not do it inside the audio thread mutex.
 		aSound.mSoloud = this;
 		SoLoud::AudioSourceInstance *instance = aSound.createInstance();
+		// A source may refuse to create an instance (WavStream does when its
+		// file can no longer be opened). Same sentinel as "no free voice".
+		if (!instance)
+			return 0;
 
 		lockAudioMutex_internal();
 		int ch = findFreeVoice_internal();

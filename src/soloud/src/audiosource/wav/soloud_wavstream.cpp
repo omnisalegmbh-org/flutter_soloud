@@ -118,9 +118,17 @@ namespace SoLoud
 		else
 		if (aParent->mFilename)
 		{
+			// The file is reopened for every instance, so it can have been
+			// deleted, moved or locked since `load` validated it. Unchecked, the
+			// decoder init below freads from a null FILE*: EXC_BAD_ACCESS on
+			// macOS, the CRT's invalid-parameter fast-fail on Windows.
 			DiskFile *df = new DiskFile;
+			if (df->open(aParent->mFilename) != SO_NO_ERROR)
+			{
+				delete df;
+				return;
+			}
 			mFile = df;
-			df->open(aParent->mFilename);
 		}
 		else
 		if (aParent->mStreamFile)
@@ -757,7 +765,17 @@ namespace SoLoud
 
 	AudioSourceInstance *WavStream::createInstance()
 	{
-		return new WavStreamInstance(this);
+		// An instance whose file would not open or whose decoder would not
+		// initialise can only ever produce silence. Handing it out would give
+		// the caller a valid handle to a voice that plays nothing, so refuse it
+		// and let `Soloud::play` report the failure instead.
+		WavStreamInstance *instance = new WavStreamInstance(this);
+		if (!instance->isOpen())
+		{
+			delete instance;
+			return 0;
+		}
+		return instance;
 	}
 
 	double WavStream::getLength()
