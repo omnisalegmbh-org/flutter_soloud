@@ -104,6 +104,9 @@ void _invokeVoidNative(int address) {
   ).asFunction<void Function()>()();
 }
 
+/// What [FlutterSoLoudFfi._isolateShutdownFinalizer] is attached to.
+final class _IsolateShutdownToken implements ffi.Finalizable {}
+
 final class _BufferStreamNativeCallbacks {
   _BufferStreamNativeCallbacks({
     this.onBuffering,
@@ -162,6 +165,43 @@ class FlutterSoLoudFfi extends FlutterSoLoud {
   nativeStateChangedCallable;
   ffi.NativeCallable<DartMixerOutputDataCallbackTFunction>?
   nativeMixerOutputDataCallable;
+
+  /// Clears the native callback pointers when this isolate group shuts down
+  /// with them still registered.
+  ///
+  /// The engine is process-wide and can outlive the isolate that registered
+  /// the callbacks: a hot restart, or iOS tearing the Flutter engine down in
+  /// the background. Its next event, such as an iOS route change, then called
+  /// a deleted callback and crashed. No Dart code runs at that shutdown, but
+  /// a native finalizer does. See `forgetDartCallbacksOnIsolateShutdown`.
+  late final ffi.NativeFinalizer _isolateShutdownFinalizer =
+      ffi.NativeFinalizer(
+        _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
+          'forgetDartCallbacksOnIsolateShutdown',
+        ).cast(),
+      );
+
+  /// Held while callbacks are registered, so [_isolateShutdownFinalizer] runs
+  /// only when the isolate group goes away.
+  ///
+  /// Attached only by the isolate that registers callbacks: a helper isolate
+  /// that merely reads samples has its own instance of this class, and the
+  /// collection of a token there must not clear the main isolate's callbacks.
+  _IsolateShutdownToken? _isolateShutdownToken;
+
+  void _watchIsolateShutdown() {
+    if (_isolateShutdownToken != null) return;
+    final token = _IsolateShutdownToken();
+    _isolateShutdownFinalizer.attach(token, ffi.nullptr, detach: token);
+    _isolateShutdownToken = token;
+  }
+
+  void _unwatchIsolateShutdown() {
+    final token = _isolateShutdownToken;
+    if (token == null) return;
+    _isolateShutdownFinalizer.detach(token);
+    _isolateShutdownToken = null;
+  }
 
   /// Controller that fires whenever new mixer output data is available.
   ///
@@ -276,6 +316,7 @@ class FlutterSoLoudFfi extends FlutterSoLoud {
     nativeStateChangedCallable = null;
     nativeMixerOutputDataCallable?.close();
     nativeMixerOutputDataCallable = null;
+    _unwatchIsolateShutdown();
   }
 
   @override
@@ -303,6 +344,7 @@ class FlutterSoLoudFfi extends FlutterSoLoud {
           _mixerOutputDataCallback,
         );
 
+    _watchIsolateShutdown();
     _setDartEventCallback(
       nativeVoiceEndedCallable!.nativeFunction,
       nativeFileLoadedCallable!.nativeFunction,
@@ -317,6 +359,7 @@ class FlutterSoLoudFfi extends FlutterSoLoud {
         ffi.NativeCallable<DartMixerOutputDataCallbackTFunction>.listener(
           _mixerOutputDataCallback,
         );
+    _watchIsolateShutdown();
     _setMixerOutputCallback(nativeMixerOutputDataCallable!.nativeFunction);
   }
 

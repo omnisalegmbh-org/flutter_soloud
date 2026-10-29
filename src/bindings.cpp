@@ -237,6 +237,26 @@ extern "C"
     dartStateChangedCallback.store(state_changed_callback);
   }
 
+  /// Forgets the Dart callbacks without touching the engine, for when the
+  /// isolate that registered them is going away.
+  ///
+  /// Dart attaches this as a `NativeFinalizer`, which the VM runs when the
+  /// isolate group shuts down even though no Dart code runs then. The engine
+  /// can outlive its isolate — a hot restart, or iOS tearing the Flutter engine
+  /// down while the app is in the background — and its next event (an iOS
+  /// route change, a voice ending) would otherwise call a callback that is
+  /// already deleted and crash the process.
+  ///
+  /// Only atomic stores: the VM may run this on any thread, while an engine
+  /// call holds the locks [clearDartCallbackRegistrations] takes.
+  FFI_PLUGIN_EXPORT void forgetDartCallbacksOnIsolateShutdown(void *)
+  {
+    dartVoiceEndedCallback.store(nullptr);
+    dartFileLoadedCallback.store(nullptr);
+    dartStateChangedCallback.store(nullptr);
+    dartMixerOutputDataCallback.store(nullptr);
+  }
+
   FFI_PLUGIN_EXPORT void clearDartCallbackRegistrations()
   {
     std::lock_guard<std::mutex> guard_init(init_deinit_mutex);
